@@ -1,0 +1,428 @@
+# Create fixed main.py with corrected transformation physics
+@'
+import sys, os, math, random, subprocess
+from PyQt6.QtWidgets import QApplication, QWidget, QLabel, QHBoxLayout, QPushButton, QMenu
+from PyQt6.QtGui import QAction, QPainter, QColor, QPen, QPixmap, QTransform
+from PyQt6.QtCore import Qt, QTimer, QPoint
+
+from utils import load_pet_stats, save_pet_stats, play_pattinson_voice, NativeSpotifyController
+
+# --- PALETTE & COLOR DEFINITIONS ---
+PALETTE = {
+    'B': QColor(0, 0, 0),          # Outline / Mask
+    'D': QColor(33, 49, 61),       # Dark Blue Cowl & Cape
+    'C': QColor(20, 30, 42),       # Dark Cape Shadow
+    'S': QColor(228, 182, 149),    # Skin Tone
+    'G': QColor(153, 153, 153),    # Grey Suit
+    'Y': QColor(245, 222, 59),     # Yellow Belt & Batarang
+    'W': QColor(255, 255, 255),    # White Eye Lenses
+    '.': None                      # Transparent
+}
+
+# --- BASE SPRITE MAP (26x25) ---
+BASE_PIXEL_MAP = [
+    "..........................",
+    "......BB..........BB......",
+    "......BDB........BDB......",
+    "......BDDDDDDDDDDDDB......",
+    "......BDDDDDDDDDDDDB......",
+    "......BDDDDDDDDDDDDB......",
+    "......BDDDDDDDDDDDDB......",
+    "....BBBDDDDDDDDDDDDBBBB...",
+    "..BBBDDDDDDDDDDDDDDDDBBB..",
+    "..BDDDDWWWBDDDDWWWDDDDDB..",
+    "..BDDDDWWWBDDDDWWWDDDDDB..",
+    "..BDDDDBBBBBBBBBBBBDDDDB..",
+    "..BBBBSSSSSSSSSSSSSSBBBB..",
+    "......BBSSSSSSSSSSBB......",
+    "......BBSSSSSSSSSSBB......",
+    "..BBBGGGGGBBBBBBBGGGGGBBB.",
+    ".BBDBBGGGBBBBBBBGGGBBDDB.",
+    ".BDDDBGGGBBBBBBBGGGBDDDB.",
+    ".BDDDBGGGBBBBBBBGGGBDDDB.",
+    ".BDDDBGYYYYYYYYYYGGBDDDB.",
+    ".BDDDBGDDDDDDDDDDGGBDDDB.",
+    ".BBBBBGGGGGGGGGGGGGBBBBB.",
+    "......BBGGGBBBBGGGBB......",
+    "......BBDDDBBBBDDDBB......",
+    "......BBBBBBBBBBBBBB......"
+]
+
+BATARANG_MAP = [
+    ".YY..YY.",
+    "YYYYYYYY",
+    ".YYYYYY.",
+    "..YYYY.."
+]
+
+BATMAN_QUOTES = [
+    ("I'm Vengeance.", "vengeance.wav"),
+    ("I am the Night.", "night.wav"),
+    ("They think I'm hiding in the shadows... But I AM the shadows.", "gotham.wav"),
+    ("Fear is a tool. It's not just a call... It's a warning.", "fear.wav"),
+    ("It doesn't matter what happens to me.", "push.wav")
+]
+
+class BatarangEntity(QWidget):
+    """Animated spinning projectile entity."""
+    def __init__(self, start_x, start_y, direction, parent=None):
+        super().__init__(parent)
+        self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint | Qt.WindowType.SubWindow)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        
+        self.pos_x = float(start_x)
+        self.pos_y = float(start_y)
+        self.direction = direction
+        self.vx = 12.0 * direction
+        self.vy = random.uniform(-1.5, 1.5)
+        self.angle = 0
+        self.life = 45
+
+        self.setGeometry(int(self.pos_x), int(self.pos_y), 32, 32)
+        self.show()
+
+    def update_physics(self):
+        self.pos_x += self.vx
+        self.pos_y += self.vy
+        self.angle = (self.angle + 45) % 360
+        self.life -= 1
+
+        self.move(int(self.pos_x), int(self.pos_y))
+        self.update()
+
+        return self.life > 0
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
+        
+        painter.translate(16, 16)
+        painter.rotate(self.angle)
+        painter.translate(-16, -16)
+
+        scale = 3
+        for y, row in enumerate(BATARANG_MAP):
+            for x, char in enumerate(row):
+                color = PALETTE.get(char)
+                if color:
+                    painter.fillRect(x * scale + 4, y * scale + 10, scale, scale, color)
+
+class GothamRainBackdrop(QWidget):
+    """Dynamic weather overlay."""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.rain_drops = [
+            [random.randint(0, 300), random.randint(0, 300), random.randint(6, 14)]
+            for _ in range(35)
+        ]
+
+    def update_rain(self):
+        for drop in self.rain_drops:
+            drop[1] += drop[2]
+            if drop[1] > self.height():
+                drop[1] = 0
+                drop[0] = random.randint(0, self.width())
+        self.update()
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.fillRect(0, 0, self.width(), self.height(), QColor(15, 20, 30, 190))
+        
+        painter.setBrush(QColor(8, 10, 15, 240))
+        painter.setPen(Qt.PenStyle.NoPen)
+        w, h = self.width(), self.height()
+        
+        painter.drawRect(int(w * 0.05), int(h * 0.35), int(w * 0.18), int(h * 0.65))
+        painter.drawRect(int(w * 0.25), int(h * 0.20), int(w * 0.22), int(h * 0.80))
+        painter.drawRect(int(w * 0.50), int(h * 0.45), int(w * 0.15), int(h * 0.55))
+        painter.drawRect(int(w * 0.68), int(h * 0.28), int(w * 0.25), int(h * 0.72))
+
+        pen = QPen(QColor(180, 210, 255, 140))
+        pen.setWidth(1)
+        painter.setPen(pen)
+        for x, y, length in self.rain_drops:
+            painter.drawLine(x, y, x - 2, y + length)
+
+class DesktopPet(QWidget):
+    def __init__(self):
+        super().__init__()
+        self.stats = load_pet_stats()
+        self.spotify = NativeSpotifyController()
+        
+        self.state = "IDLE"
+        self.vel_x = 0.0
+        self.target_vel_x = 0.0
+        self.pos_x = float(self.stats.get("pos_x", 300))
+        self.pos_y = float(self.stats.get("pos_y", 300))
+        self.old_pos = None
+        self.walk_direction = 1
+        
+        self.anim_tick = 0
+        self.batarangs = []
+
+        self.initUI()
+        self.initTimers()
+        self.apply_layout()
+
+        self.move(int(self.pos_x), int(self.pos_y))
+        self.show()
+
+    def initUI(self):
+        self.setWindowFlags(
+            Qt.WindowType.FramelessWindowHint |
+            Qt.WindowType.WindowStaysOnTopHint |
+            Qt.WindowType.SubWindow
+        )
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+
+        self.backdrop = GothamRainBackdrop(self)
+        self.pet_label = QLabel(self)
+        self.pet_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        self.hud_container = QWidget(self)
+        self.hud_container.setStyleSheet(
+            "QWidget { background-color: rgba(12, 12, 12, 230); border: 1.5px solid #F5DE3B; border-radius: 10px; }"
+            "QPushButton { background-color: transparent; color: #F5DE3B; font-weight: bold; border: none; font-size: 13px; font-family: 'Segoe UI', sans-serif; }"
+            "QPushButton:hover { color: #FFFFFF; background-color: rgba(245, 222, 59, 50); border-radius: 5px; }"
+        )
+        
+        hud_layout = QHBoxLayout(self.hud_container)
+        hud_layout.setContentsMargins(6, 2, 6, 2)
+        hud_layout.setSpacing(10)
+
+        self.prev_btn = QPushButton("⏮", self.hud_container)
+        self.prev_btn.clicked.connect(self.cmd_prev)
+        hud_layout.addWidget(self.prev_btn)
+
+        self.play_btn = QPushButton("⏯", self.hud_container)
+        self.play_btn.clicked.connect(self.cmd_play)
+        hud_layout.addWidget(self.play_btn)
+
+        self.next_btn = QPushButton("⏭", self.hud_container)
+        self.next_btn.clicked.connect(self.cmd_next)
+        hud_layout.addWidget(self.next_btn)
+
+        self.speech_bubble = QLabel("", self)
+        self.speech_bubble.setStyleSheet(
+            "QLabel { background-color: #0A0A0A; color: #F5DE3B; border: 2px solid #F5DE3B; "
+            "border-radius: 8px; padding: 4px 8px; font-size: 11px; font-weight: bold; }"
+        )
+        self.speech_bubble.hide()
+
+    def initTimers(self):
+        self.engine_timer = QTimer(self)
+        self.engine_timer.timeout.connect(self.main_engine_loop)
+        self.engine_timer.start(16)
+
+        self.rain_timer = QTimer(self)
+        self.rain_timer.timeout.connect(self.backdrop.update_rain)
+        self.rain_timer.start(35)
+
+        self.ai_timer = QTimer(self)
+        self.ai_timer.timeout.connect(self.ai_decision_loop)
+        self.ai_timer.start(4000)
+
+    def apply_layout(self):
+        scale_val = max(100, int(self.stats.get("scale", 300)))
+        base_size = max(64, int(64 * (scale_val / 100)))
+
+        widget_w = base_size + 40
+        widget_h = base_size + 80
+
+        self.resize(widget_w, widget_h)
+        self.hud_container.setGeometry(int((widget_w - 110) / 2), 0, 110, 28)
+        self.backdrop.setGeometry(20, 32, base_size, base_size)
+        self.pet_label.setGeometry(20, 32, base_size, base_size)
+        self.speech_bubble.setGeometry(5, 30, widget_w - 10, 26)
+
+    def render_advanced_sprite(self) -> QPixmap:
+        """Procedural state-driven sprite frame rendering."""
+        scale_val = max(100, int(self.stats.get("scale", 300)))
+        base_size = max(64, int(64 * (scale_val / 100)))
+
+        grid_w, grid_h = len(BASE_PIXEL_MAP[0]), len(BASE_PIXEL_MAP)
+        canvas = QPixmap(grid_w, grid_h)
+        canvas.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(canvas)
+
+        leg_frame = (self.anim_tick // 6) % 4
+        cape_wave = math.sin(self.anim_tick * 0.2) * 1.5
+        breathe_y = 1 if (self.state == "IDLE" and (self.anim_tick // 15) % 2 == 1) else 0
+
+        for y, row in enumerate(BASE_PIXEL_MAP):
+            for x, char in enumerate(row):
+                draw_x = x
+                draw_y = y
+                char_to_draw = char
+
+                if char in ['D', 'C'] and x in [2, 3, 4, 21, 22, 23]:
+                    if self.state == "WALKING":
+                        draw_x += int(cape_wave if x < 12 else -cape_wave)
+                    elif self.state == "COMBAT":
+                        draw_x += -2 if self.walk_direction > 0 else 2
+
+                if y >= 22 and char in ['B', 'D', 'G']:
+                    if self.state == "WALKING":
+                        if leg_frame == 1:
+                            draw_y += 1 if x < 13 else -1
+                        elif leg_frame == 3:
+                            draw_y += -1 if x < 13 else 1
+                    elif self.state == "DRAGGING":
+                        draw_y += random.choice([0, 1])
+
+                if self.state == "COMBAT" and y in [15, 16, 17] and (x > 18 if self.walk_direction > 0 else x < 7):
+                    char_to_draw = 'G'
+                    draw_y -= 2
+
+                if y < 15 and self.state == "IDLE":
+                    draw_y += breathe_y
+
+                color = PALETTE.get(char_to_draw)
+                if color:
+                    painter.setPen(color)
+                    painter.drawPoint(draw_x, draw_y)
+
+        painter.end()
+
+        scaled_pixmap = canvas.scaled(
+            base_size, base_size,
+            Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.FastTransformation
+        )
+
+        if self.walk_direction < 0:
+            transform = QTransform().scale(-1, 1)
+            scaled_pixmap = scaled_pixmap.transformed(transform)
+
+        return scaled_pixmap
+
+    def main_engine_loop(self):
+        """Physics acceleration, state updates, and rendering tick."""
+        self.anim_tick += 1
+
+        if self.state != "DRAGGING":
+            self.vel_x += (self.target_vel_x - self.vel_x) * 0.12
+            self.pos_x += self.vel_x
+
+            screen_width = QApplication.primaryScreen().geometry().width()
+            if self.pos_x > screen_width - self.width():
+                self.pos_x = screen_width - self.width()
+                self.walk_direction = -1
+                self.target_vel_x = -2.5
+            elif self.pos_x < 0:
+                self.pos_x = 0
+                self.walk_direction = 1
+                self.target_vel_x = 2.5
+
+            self.move(int(self.pos_x), int(self.pos_y))
+
+        self.batarangs = [b for b in self.batarangs if b.update_physics()]
+        self.pet_label.setPixmap(self.render_advanced_sprite())
+
+    def ai_decision_loop(self):
+        if self.state in ["DRAGGING", "COMBAT"]:
+            return
+
+        choice = random.random()
+        if choice < 0.45:
+            self.state = "IDLE"
+            self.target_vel_x = 0.0
+        elif choice < 0.85:
+            self.state = "WALKING"
+            self.walk_direction = 1 if random.random() > 0.5 else -1
+            self.target_vel_x = 2.2 * self.walk_direction
+        else:
+            self.trigger_batarang_attack()
+
+    def trigger_batarang_attack(self):
+        self.state = "COMBAT"
+        self.target_vel_x = 0.0
+        
+        spawn_x = self.pos_x + (self.width() if self.walk_direction > 0 else -10)
+        spawn_y = self.pos_y + 45
+        batarang = BatarangEntity(spawn_x, spawn_y, self.walk_direction)
+        self.batarangs.append(batarang)
+
+        QTimer.singleShot(700, self.reset_to_idle)
+
+    def reset_to_idle(self):
+        if self.state != "DRAGGING":
+            self.state = "IDLE"
+
+    def show_speech(self, text):
+        self.speech_bubble.setText(text)
+        self.speech_bubble.adjustSize()
+        self.speech_bubble.show()
+        QTimer.singleShot(3500, self.speech_bubble.hide)
+
+    def speak_random(self):
+        quote, voice = random.choice(BATMAN_QUOTES)
+        self.show_speech(quote)
+        if voice:
+            play_pattinson_voice(voice)
+
+    def cmd_play(self):
+        msg = self.spotify.play_pause()
+        self.show_speech(msg)
+
+    def cmd_next(self):
+        msg = self.spotify.next_track()
+        self.show_speech(msg)
+
+    def cmd_prev(self):
+        msg = self.spotify.previous_track()
+        self.show_speech(msg)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.old_pos = event.globalPosition().toPoint()
+            self.state = "DRAGGING"
+            self.target_vel_x = 0.0
+            
+            self.trigger_batarang_attack()
+            self.speak_random()
+
+    def mouseMoveEvent(self, event):
+        if self.old_pos is not None:
+            delta = event.globalPosition().toPoint() - self.old_pos
+            self.pos_x += delta.x()
+            self.pos_y += delta.y()
+            self.move(int(self.pos_x), int(self.pos_y))
+            self.old_pos = event.globalPosition().toPoint()
+
+    def mouseReleaseEvent(self, event):
+        self.old_pos = None
+        self.state = "IDLE"
+        self.stats["pos_x"] = int(self.pos_x)
+        self.stats["pos_y"] = int(self.pos_y)
+        save_pet_stats(self.stats)
+
+    def contextMenuEvent(self, event):
+        menu = QMenu(self)
+        speak_act = QAction("💬 Speak", self)
+        speak_act.triggered.connect(self.speak_random)
+        attack_act = QAction("🦇 Throw Batarang", self)
+        attack_act.triggered.connect(self.trigger_batarang_attack)
+        exit_act = QAction("❌ Vanish into Darkness", self)
+        exit_act.triggered.connect(self.close)
+
+        menu.addAction(speak_act)
+        menu.addAction(attack_act)
+        menu.addSeparator()
+        menu.addAction(exit_act)
+        menu.exec(event.globalPos())
+
+    def closeEvent(self, event):
+        self.stats["pos_x"] = int(self.pos_x)
+        self.stats["pos_y"] = int(self.pos_y)
+        save_pet_stats(self.stats)
+        event.accept()
+
+if __name__ == '__main__':
+    app = QApplication(sys.argv)
+    pet = DesktopPet()
+    sys.exit(app.exec())
+'@ | Out-File -Encoding utf8 -FilePath "main.py"
+
+# Launch Application Engine
+python main.py
